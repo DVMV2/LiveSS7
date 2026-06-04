@@ -1,0 +1,12 @@
+requests==2.31.0
+beautifulsoup4==4.12.2
+gspread==6.1.0
+google-auth==2.30.0
+google-auth-oauthlib==1.2.1
+google-auth-httplib2==0.2.0
+lxml==5.2.1
+youtube-transcript-api==0.6.2
+requests
+beautifulsoup4
+
+mysql-connector-python>=8.0.33
