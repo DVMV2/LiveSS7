@@ -27,7 +27,7 @@ jobs:
       - name: Install Python Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install gspread pandas mysql-connector-python selenium webdriver-manager Pillow
+          pip install gspread pandas mysql-connector-python selenium webdriver-manager
 
       - name: Run Scraper Script
         env:
