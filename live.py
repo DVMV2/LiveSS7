@@ -99,8 +99,16 @@ def main():
         # Ensure we handle the dataframe indexing safely
         data = ws.get_all_values()
         df = pd.DataFrame(data[1:], columns=data[0]) 
-        # Mapping Symbol (Col A) to URL (Col D)
-        url_map = dict(zip(df.iloc[:, 0].str.upper().str.strip(), df.iloc[:, 3]))
+        
+        # Mapping Symbol (Col A) to Week URL (Col C) and Day URL (Col D)
+        url_map = {}
+        for _, row in df.iterrows():
+            symbol_key = str(row.iloc[0]).upper().strip()
+            if symbol_key:
+                url_map[symbol_key] = {
+                    "week": row.iloc[2] if len(row) > 2 else None,
+                    "day": row.iloc[3] if len(row) > 3 else None
+                }
 
         # ---------------- BROWSER ---------------- #
         print(f"🚀 Processing {len(stocks)} stocks...")
@@ -123,49 +131,57 @@ def main():
         # ---------------- LOOP ---------------- #
         for stock in stocks:
             symbol = stock["Symbol"].upper().strip()
-            url = url_map.get(symbol)
-            if not url:
-                print(f"⚠️ No URL for {symbol}")
+            urls = url_map.get(symbol)
+            
+            if not urls:
+                print(f"⚠️ No URLs found in sheet for {symbol}")
                 continue
 
-            try:
-                # Ping to make sure the connection hasn't dropped mid-loop
-                db_conn.ping(reconnect=True, attempts=3, delay=2)
-                print(f"📸 Capturing {symbol}...", end=" ", flush=True)
+            # Process both timeframes sequentially
+            for timeframe in ["week", "day"]:
+                url = urls.get(timeframe)
+                if not url or str(url).strip() == "":
+                    print(f"⚠️ No {timeframe} URL for {symbol}")
+                    continue
 
-                driver.get(url)
+                try:
+                    # Ping to make sure the connection hasn't dropped mid-loop
+                    db_conn.ping(reconnect=True, attempts=3, delay=2)
+                    print(f"📸 Capturing {symbol} ({timeframe})...", end=" ", flush=True)
 
-                WebDriverWait(driver, 25).until(
-                    EC.presence_of_element_located((By.CLASS_NAME, "chart-container"))
-                )
-                time.sleep(5) 
+                    driver.get(url)
 
-                img_data = driver.get_screenshot_as_png()
+                    WebDriverWait(driver, 25).until(
+                        EC.presence_of_element_located((By.CLASS_NAME, "chart-container"))
+                    )
+                    time.sleep(5) 
 
-                # ---------------- INSERT (UTC TIME) ---------------- #
-                sql = f"""
-                    INSERT INTO `{TARGET_TABLE}` 
-                    (symbol, timeframe, real_change, real_close, screenshot, created_at)
-                    VALUES (%s, %s, %s, %s, %s, %s)
-                """
+                    img_data = driver.get_screenshot_as_png()
 
-                cur.execute(sql, (
-                    symbol,
-                    "day",
-                    stock["real_change"],
-                    stock["real_close"],
-                    img_data,
-                    datetime.utcnow()
-                ))
-                
-                # Explicitly commit each record to ensure it is written immediately
-                db_conn.commit()
+                    # ---------------- INSERT (UTC TIME) ---------------- #
+                    sql = f"""
+                        INSERT INTO `{TARGET_TABLE}` 
+                        (symbol, timeframe, real_change, real_close, screenshot, created_at)
+                        VALUES (%s, %s, %s, %s, %s, %s)
+                    """
 
-                print("✅")
-                success_count += 1
+                    cur.execute(sql, (
+                        symbol,
+                        timeframe,
+                        stock["real_change"],
+                        stock["real_close"],
+                        img_data,
+                        datetime.utcnow()
+                    ))
+                    
+                    # Explicitly commit each record to ensure it is written immediately
+                    db_conn.commit()
 
-            except Exception as e:
-                print(f"❌ Error: {str(e)[:50]}")
+                    print("✅")
+                    success_count += 1
+
+                except Exception as e:
+                    print(f"❌ Error during {timeframe} capture: {str(e)[:50]}")
 
         print(f"🏁 Done. Total successful screenshots: {success_count}")
 
