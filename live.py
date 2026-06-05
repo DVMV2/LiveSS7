@@ -56,9 +56,9 @@ def main():
         )
         cur = db_conn.cursor(dictionary=True)
 
-        # ✅ CLEAR OLD DATA
-        print("🧹 Clearing old data...")
-        cur.execute(f"TRUNCATE TABLE `{TARGET_TABLE}`")
+        # ✅ REMOVE ONLY ROWS WHERE TAGS ARE BLANK OR NULL
+        print("🧹 Clearing rows with blank tags...")
+        cur.execute(f"DELETE FROM `{TARGET_TABLE}` WHERE `tags` IS NULL OR TRIM(`tags`) = ''")
 
         # ---------------- FETCH STOCKS ---------------- #
         cur.execute(f"""
