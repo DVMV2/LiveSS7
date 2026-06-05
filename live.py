@@ -45,15 +45,33 @@ def main():
         # Use UTC for logging
         print(f"🕒 Execution Started at UTC: {datetime.utcnow()}")
 
-        # ---------------- DB CONNECTION ---------------- #
+        # ---------------- DB CONNECTION WITH RETRIES ---------------- #
         print("🔗 Connecting to Database...")
-        db_conn = mysql.connector.connect(
-            host=os.getenv("DB_HOST"),
-            user=os.getenv("DB_USER"),
-            password=os.getenv("DB_PASSWORD"),
-            database=os.getenv("DB_NAME"),
-            autocommit=True # Keep this, but we will call commit explicitly to be safe
-        )
+        max_retries = 5
+        retry_delay = 5  # seconds
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                db_conn = mysql.connector.connect(
+                    host=os.getenv("DB_HOST"),
+                    user=os.getenv("DB_USER"),
+                    password=os.getenv("DB_PASSWORD"),
+                    database=os.getenv("DB_NAME"),
+                    autocommit=True,
+                    connect_timeout=10 # Prevents the script from hanging indefinitely
+                )
+                if db_conn.is_connected():
+                    print("✅ Successfully connected to the database!")
+                    break
+            except mysql.connector.Error as err:
+                print(f"⚠️ Connection attempt {attempt}/{max_retries} failed: {err}")
+                if attempt < max_retries:
+                    print(f"⏳ Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                else:
+                    print("🚨 Fatal: Could not establish a database connection after multiple attempts.")
+                    return
+
         cur = db_conn.cursor(dictionary=True)
 
         # ✅ REMOVE ONLY ROWS WHERE TAGS ARE BLANK OR NULL
@@ -111,6 +129,7 @@ def main():
                 continue
 
             try:
+                # Ping to make sure the connection hasn't dropped mid-loop
                 db_conn.ping(reconnect=True, attempts=3, delay=2)
                 print(f"📸 Capturing {symbol}...", end=" ", flush=True)
 
