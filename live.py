@@ -158,11 +158,16 @@ def main():
 
                     img_data = driver.get_screenshot_as_png()
 
-                    # ---------------- INSERT (UTC TIME) ---------------- #
+                    # ---------------- INSERT OR UPDATE (UTC TIME) ---------------- #
                     sql = f"""
                         INSERT INTO `{TARGET_TABLE}` 
                         (symbol, timeframe, real_change, real_close, screenshot, created_at)
                         VALUES (%s, %s, %s, %s, %s, %s)
+                        ON DUPLICATE KEY UPDATE
+                        real_change = VALUES(real_change),
+                        real_close = VALUES(real_close),
+                        screenshot = VALUES(screenshot),
+                        created_at = VALUES(created_at)
                     """
 
                     cur.execute(sql, (
