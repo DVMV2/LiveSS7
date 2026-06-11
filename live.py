@@ -43,29 +43,54 @@ def get_optimized_driver():
 # ---------------- POPUP CLEANER ---------------- #
 def clear_popups(driver):
     """
-    Injects JavaScript to force-delete known TradingView modal dialogs, 
-    overlays, and login/upgrade prompts that block the chart.
+    Advanced recursive pop-up cleaner. Destroys marketing boxes, sales promotions, 
+    and backdrops across the main document, Shadow DOMs, and nested Iframes.
     """
-    selectors_to_remove = [
-        "[class^='overlap-']",            # General overlay screens
-        "[class*='dialog']",             # Dialog boxes/Popups
-        "[class*='modal']",              # Generic modals
-        ".tv-dialog",                    # Old legacy TV dialogs
-        "div[data-role='modal-container']", # Modern TV modal wrapper
-        "div[class*='overlapManager']",  # TV's custom popup layers
-        "#gcap-reveal-modal",            # Adblock/Promo specific IDs
-        "[class*='toast']",              # Notification snackbars
-        "[class*='cookie']"              # Cookie consent banners
-    ]
-    
-    js_script = f"""
-        const selectors = {json.dumps(selectors_to_remove)};
-        selectors.forEach(selector => {{
-            document.querySelectorAll(selector).forEach(el => {{
-                try {{ el.remove(); }} catch(e) {{}}
-            }});
-        }});
-        // Restore scrolling on the body if a modal disabled it
+    js_script = """
+        const selectors = [
+            "[class*='overlap']", "[class*='dialog']", "[class*='modal']", 
+            ".tv-dialog", "div[data-role='modal-container']", 
+            "div[class*='overlapManager']", "#gcap-reveal-modal", 
+            "[class*='toast']", "[class*='cookie']", "[id*='overlap']"
+        ];
+
+        function nukeElements(root) {
+            if (!root) return;
+            // 1. Clear matching nodes in this root
+            selectors.forEach(selector => {
+                root.querySelectorAll(selector).forEach(el => {
+                    try { el.remove(); } catch(e) {}
+                });
+            });
+
+            // 2. Scan and clear within Shadow DOMs
+            root.querySelectorAll('*').forEach(el => {
+                if (el.shadowRoot) {
+                    nukeElements(el.shadowRoot);
+                }
+            });
+        }
+
+        // Clean Main Document Frame
+        nukeElements(document);
+
+        // Clean All Available IFrames Deeply
+        document.querySelectorAll('iframe').forEach(iframe => {
+            try {
+                const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
+                if (iframeDoc) {
+                    nukeElements(iframeDoc);
+                    // If the iframe itself is a promotional popup canvas, eliminate it entirely
+                    if (iframe.outerHTML.includes('sale') || iframe.outerHTML.includes('promo') || iframe.outerHTML.includes('overlap')) {
+                        iframe.remove();
+                    }
+                }
+            } catch(e) {
+                // Cross-origin boundaries are bypassed if standard elements; otherwise safely ignored
+            }
+        });
+
+        // Re-enable scrolling layouts just in case they were locked by an overlay
         document.body.style.overflow = 'auto';
         document.documentElement.style.overflow = 'auto';
     """
@@ -192,25 +217,26 @@ def main():
                     print(f"📸 Capturing {symbol} ({timeframe})...", end=" ", flush=True)
                     driver.get(url)
 
-                    # Better wait setup: Ensure the canvas element rendering engine is loaded
+                    # Ensure the canvas element rendering engine is loaded
                     WebDriverWait(driver, 20).until(
                         EC.visibility_of_element_located((By.XPATH, "//*[contains(@class, 'chart-container')]//canvas"))
                     )
                     
-                    # Nuke any popups right before taking the shot
+                    # Small initial sleep allows late-loading promotion triggers to emerge
+                    time.sleep(1.5)
+                    
+                    # Nuke any popups/sale frames right before taking the shot
                     clear_popups(driver)
                     
-                    # Small grace sleep for crosshairs/indicators to clean up and settle
-                    time.sleep(2.5) 
+                    # Short stabilization grace period
+                    time.sleep(1.0) 
 
                     img_data = driver.get_screenshot_as_png()
 
                     # ---------------- DEFENSIVE RECONNECT PING ---------------- #
-                    # Restored specifically right before execution to prevent idle timeouts from breaking the batch
                     try:
                         db_conn.ping(reconnect=True, attempts=3, delay=1)
                     except mysql.connector.Error:
-                        # Fallback case if ping fails completely: regenerate cursor context
                         cur.close()
                         cur = db_conn.cursor(dictionary=True)
 
@@ -262,7 +288,7 @@ def main():
         print(f"🚨 CRITICAL ERROR: {e}")
         if db_conn:
             try:
-                db_conn.rollback() # Rollback open transaction on failure
+                db_conn.rollback()
             except Exception:
                 pass
 
