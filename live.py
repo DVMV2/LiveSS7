@@ -194,6 +194,8 @@ def main():
                 "path": "/"
             })
         driver.refresh()
+        
+        driver.set_window_size(1920, 1080)
 
         success_count = 0
         uncommitted_mutations = 0
@@ -222,15 +224,28 @@ def main():
                         EC.visibility_of_element_located((By.XPATH, "//*[contains(@class, 'chart-container')]//canvas"))
                     )
                     
-                    # Small initial sleep allows late-loading promotion triggers to emerge
-                    time.sleep(1.5)
-                    
-                    # Nuke any popups/sale frames right before taking the shot
-                    clear_popups(driver)
-                    
-                    # Short stabilization grace period
-                    time.sleep(1.0) 
+                    # Wait for TradingView to finish loading
+                    time.sleep(5)
 
+                    # Run popup cleaner multiple times
+                    for _ in range(3):
+                        clear_popups(driver)
+                        time.sleep(1)
+
+                    # Force page to normal state
+                    driver.execute_script("""
+                    window.scrollTo(0,0);
+                    document.body.style.overflow='visible';
+                    document.documentElement.style.overflow='visible';
+                    """)
+
+                    # Give DOM time to settle
+                    time.sleep(2)
+
+                    # DEBUG SCREENSHOT
+                    driver.save_screenshot(f"debug_{symbol}_{timeframe}.png")
+
+                    # Final screenshot
                     img_data = driver.get_screenshot_as_png()
 
                     # ---------------- DEFENSIVE RECONNECT PING ---------------- #
