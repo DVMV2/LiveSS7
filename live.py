@@ -205,6 +205,15 @@ def main():
 
                     img_data = driver.get_screenshot_as_png()
 
+                    # ---------------- DEFENSIVE RECONNECT PING ---------------- #
+                    # Restored specifically right before execution to prevent idle timeouts from breaking the batch
+                    try:
+                        db_conn.ping(reconnect=True, attempts=3, delay=1)
+                    except mysql.connector.Error:
+                        # Fallback case if ping fails completely: regenerate cursor context
+                        cur.close()
+                        cur = db_conn.cursor(dictionary=True)
+
                     # ---------------- INSERT OR UPDATE ---------------- #
                     sql = f"""
                         INSERT INTO `{TARGET_TABLE}` 
@@ -241,14 +250,21 @@ def main():
 
         # Final batch commit for any remaining mutations
         if uncommitted_mutations > 0:
-            db_conn.commit()
+            try:
+                db_conn.ping(reconnect=True)
+                db_conn.commit()
+            except Exception:
+                pass
 
         print(f"🏁 Done. Total successful screenshots: {success_count}")
 
     except Exception as e:
         print(f"🚨 CRITICAL ERROR: {e}")
         if db_conn:
-            db_conn.rollback() # Rollback open transaction on failure
+            try:
+                db_conn.rollback() # Rollback open transaction on failure
+            except Exception:
+                pass
 
     finally:
         if db_conn and db_conn.is_connected():
