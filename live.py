@@ -44,7 +44,7 @@ def main():
             user=os.getenv("DB_USER"),
             password=os.getenv("DB_PASSWORD"),
             database=os.getenv("DB_NAME"),
-            autocommit=True, # Auto-saving turned ON to keep code simple
+            autocommit=True, # Auto-save transactions instantly
             connect_timeout=10 
         )
         cur = db_conn.cursor(dictionary=True)
@@ -111,7 +111,8 @@ def main():
                     
                     img_data = driver.get_screenshot_as_png()
 
-                    # 5. Insert or Update Row cleanly (Keeps existing tags perfectly safe!)
+                    # 5. Insert or Update cleanly 
+                    # `tags` = IFNULL(`tags`, VALUES(`tags`)) protects any manually typed text from getting touched!
                     sql = f"""
                         INSERT INTO `{TARGET_TABLE}` 
                         (symbol, timeframe, real_change, real_close, screenshot, created_at)
