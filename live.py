@@ -4,6 +4,7 @@ import json
 import gspread
 import pandas as pd
 import mysql.connector
+from mysql.connector import Error as MySQLError
 from datetime import datetime, timezone
 
 from selenium import webdriver
@@ -19,7 +20,11 @@ STOCK_LIST_URL = "https://docs.google.com/spreadsheets/d/1V8DsH-R3vdUbXqDKZYWHk_
 STOCK_LIST_GID = 1400370843
 SOURCE_TABLE = "wp_live_close"
 TARGET_TABLE = "live_screen"
-CHANGE_THRESHOLD = 7.0 
+CHANGE_THRESHOLD = 7.0
+
+DB_CONNECT_RETRIES = 5       # number of attempts
+DB_CONNECT_RETRY_DELAY = 5   # seconds between attempts (will increase)
+
 
 def get_optimized_driver():
     opts = Options()
@@ -31,24 +36,61 @@ def get_optimized_driver():
     opts.add_argument("--blink-features=AutomationControlled")
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=opts)
 
+
+def get_db_connection():
+    """
+    Robust DB connection with retries + exponential backoff.
+    Also sets sane timeouts so the connection doesn't hang forever
+    or silently drop later.
+    """
+    last_err = None
+    for attempt in range(1, DB_CONNECT_RETRIES + 1):
+        try:
+            conn = mysql.connector.connect(
+                host=os.getenv("DB_HOST"),
+                user=os.getenv("DB_USER"),
+                password=os.getenv("DB_PASSWORD"),
+                database=os.getenv("DB_NAME"),
+                autocommit=True,
+                connect_timeout=10,
+                connection_timeout=10,
+                use_pure=True,          # avoids some C-extension flakiness
+                pool_reset_session=True,
+            )
+            if conn.is_connected():
+                print(f"✅ Connected to Database (attempt {attempt}).")
+                return conn
+        except MySQLError as e:
+            last_err = e
+            wait = DB_CONNECT_RETRY_DELAY * attempt
+            print(f"⚠️ DB connect attempt {attempt}/{DB_CONNECT_RETRIES} failed: {e}")
+            if attempt < DB_CONNECT_RETRIES:
+                print(f"⏳ Retrying in {wait}s...")
+                time.sleep(wait)
+
+    raise ConnectionError(f"❌ Could not connect to database after {DB_CONNECT_RETRIES} attempts: {last_err}")
+
+
+def ensure_connection(conn):
+    """Re-ping / reconnect if the connection has dropped mid-run."""
+    try:
+        conn.ping(reconnect=True, attempts=3, delay=2)
+    except MySQLError:
+        return get_db_connection()
+    return conn
+
+
 def main():
     driver = None
     db_conn = None
+    cur = None
 
     try:
         print(f"🕒 Started at: {datetime.now(timezone.utc)} UTC")
 
-        # 1. Connect to Database
-        db_conn = mysql.connector.connect(
-            host=os.getenv("DB_HOST"),
-            user=os.getenv("DB_USER"),
-            password=os.getenv("DB_PASSWORD"),
-            database=os.getenv("DB_NAME"),
-            autocommit=True, # Auto-save transactions instantly
-            connect_timeout=10 
-        )
+        # 1. Connect to Database (robust, with retries)
+        db_conn = get_db_connection()
         cur = db_conn.cursor(dictionary=True)
-        print("✅ Connected to Database.")
 
         # 2. Fetch Breakout Stocks
         cur.execute(f"""
@@ -67,8 +109,8 @@ def main():
         gc = gspread.service_account_from_dict(creds)
         ws = gc.open_by_url(STOCK_LIST_URL).get_worksheet_by_id(STOCK_LIST_GID)
         data = ws.get_all_values()
-        
-        df = pd.DataFrame(data[1:], columns=data[0]) 
+
+        df = pd.DataFrame(data[1:], columns=data[0])
         url_map = {}
         for _, row in df.iterrows():
             if len(row) >= 1 and not pd.isna(row.iloc[0]):
@@ -81,7 +123,7 @@ def main():
         # 4. Process screenshots
         print(f"🚀 Processing {len(stocks)} breakthrough tickers...")
         driver = get_optimized_driver()
-        
+
         # Inject TradingView login credentials via cookies once
         driver.get("https://www.tradingview.com/")
         for c in json.loads(os.getenv("TRADINGVIEW_COOKIES")):
@@ -107,12 +149,15 @@ def main():
                     WebDriverWait(driver, 15).until(
                         EC.visibility_of_element_located((By.XPATH, "//*[contains(@class, 'chart-container')]//canvas"))
                     )
-                    time.sleep(4) # Brief pause for candles to draw cleanly
-                    
+                    time.sleep(4)  # Brief pause for candles to draw cleanly
+
                     img_data = driver.get_screenshot_as_png()
 
-                    # 5. Insert or Update cleanly 
-                    # `tags` = IFNULL(`tags`, VALUES(`tags`)) protects any manually typed text from getting touched!
+                    # Make sure DB connection is alive before each write
+                    db_conn = ensure_connection(db_conn)
+                    cur = db_conn.cursor(dictionary=True)
+
+                    # 5. Insert or Update cleanly
                     sql = f"""
                         INSERT INTO `{TARGET_TABLE}` 
                         (symbol, timeframe, real_change, real_close, screenshot, created_at)
@@ -126,14 +171,14 @@ def main():
                     """
 
                     cur.execute(sql, (
-                        symbol, timeframe, 
-                        stock["real_change"], stock["real_close"], 
+                        symbol, timeframe,
+                        stock["real_change"], stock["real_close"],
                         img_data, datetime.now(timezone.utc)
                     ))
                     print(" ✅")
 
                 except Exception as e:
-                    print(f" ❌ Skipping: {str(e)[:40]}")
+                    print(f" ❌ Skipping: {str(e)[:80]}")
 
         print("🏁 Processing finished successfully.")
 
@@ -141,12 +186,17 @@ def main():
         print(f"🚨 Script Interrupted: {e}")
 
     finally:
+        if cur:
+            try:
+                cur.close()
+            except Exception:
+                pass
         if db_conn and db_conn.is_connected():
-            cur.close()
             db_conn.close()
             print("🔌 Database link disconnected.")
         if driver:
             driver.quit()
+
 
 if __name__ == "__main__":
     main()
