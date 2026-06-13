@@ -11,6 +11,7 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
@@ -34,6 +35,10 @@ def get_optimized_driver():
     opts.add_argument("--window-size=1920,1080")
     opts.add_argument("--disable-gpu")
     opts.add_argument("--blink-features=AutomationControlled")
+    opts.add_argument("--disable-notifications")
+    opts.add_experimental_option("prefs", {
+        "profile.default_content_setting_values.notifications": 2
+    })
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=opts)
 
 
@@ -78,6 +83,44 @@ def ensure_connection(conn):
     except MySQLError:
         return get_db_connection()
     return conn
+
+
+def dismiss_popups(driver):
+    """Close common TradingView overlay dialogs/popups that block the chart."""
+    selectors = [
+        "//button[contains(@aria-label, 'Close')]",
+        "//button[contains(@class, 'close')]",
+        "//div[@data-name='popup-button-close']",
+        "//*[contains(@class, 'dialogCloseButton')]",
+        "//button[contains(text(), 'Got it')]",
+        "//button[contains(text(), 'No, thanks')]",
+        "//button[contains(text(), 'Accept')]",
+        "//button[contains(text(), 'Accept all')]",
+        "//div[contains(@class,'tv-dialog__close')]",
+        "//*[contains(@class, 'tv-dialog__close')]",
+        "//*[@data-name='close']",
+    ]
+    for sel in selectors:
+        try:
+            elems = driver.find_elements(By.XPATH, sel)
+            for el in elems:
+                if el.is_displayed():
+                    try:
+                        el.click()
+                    except Exception:
+                        try:
+                            driver.execute_script("arguments[0].click();", el)
+                        except Exception:
+                            pass
+                    time.sleep(0.3)
+        except Exception:
+            pass
+
+    # ESC key fallback — closes most TradingView modals
+    try:
+        driver.find_element(By.TAG_NAME, "body").send_keys(Keys.ESCAPE)
+    except Exception:
+        pass
 
 
 def main():
@@ -129,6 +172,8 @@ def main():
         for c in json.loads(os.getenv("TRADINGVIEW_COOKIES")):
             driver.add_cookie({"name": c["name"], "value": c["value"], "domain": ".tradingview.com", "path": "/"})
         driver.refresh()
+        time.sleep(2)
+        dismiss_popups(driver)
 
         for stock in stocks:
             symbol = stock["Symbol"].upper().strip()
@@ -149,7 +194,14 @@ def main():
                     WebDriverWait(driver, 15).until(
                         EC.visibility_of_element_located((By.XPATH, "//*[contains(@class, 'chart-container')]//canvas"))
                     )
-                    time.sleep(4)  # Brief pause for candles to draw cleanly
+
+                    # Dismiss any popups/dialogs that appear after chart load
+                    time.sleep(1)
+                    dismiss_popups(driver)
+                    time.sleep(1)
+                    dismiss_popups(driver)  # second pass for late-appearing popups
+
+                    time.sleep(3)  # Brief pause for candles to draw cleanly
 
                     img_data = driver.get_screenshot_as_png()
 
