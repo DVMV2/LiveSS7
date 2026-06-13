@@ -20,7 +20,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 STOCK_LIST_URL = "https://docs.google.com/spreadsheets/d/1V8DsH-R3vdUbXqDKZYWHk_8T0VRjqTEVyj7PhlIDtG4/edit#gid=0"
 STOCK_LIST_GID = 1400370843
 SOURCE_TABLE = "wp_live_close"
-TARGET_TABLE = "live_screen"
+TARGET_TABLE = "live_screen_1"
 CHANGE_THRESHOLD = 7.0
 
 DB_CONNECT_RETRIES = 5       # number of attempts
