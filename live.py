@@ -20,7 +20,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 STOCK_LIST_URL = "https://docs.google.com/spreadsheets/d/1V8DsH-R3vdUbXqDKZYWHk_8T0VRjqTEVyj7PhlIDtG4/edit#gid=0"
 STOCK_LIST_GID = 1400370843
 SOURCE_TABLE = "wp_live_close"
-TARGET_TABLE = "live_screen_1"
+TARGET_TABLE = "live_screen"
 CHANGE_THRESHOLD = 7.0
 
 DB_CONNECT_RETRIES = 5       # number of attempts
@@ -209,7 +209,12 @@ def main():
                     db_conn = ensure_connection(db_conn)
                     cur = db_conn.cursor(dictionary=True)
 
-                    # 5. Insert or Update cleanly
+                    # 5. Remove existing row if it's untagged, then insert/update
+                    cur.execute(f"""
+                        DELETE FROM `{TARGET_TABLE}`
+                        WHERE symbol = %s AND timeframe = %s AND `tags` IS NULL
+                    """, (symbol, timeframe))
+
                     sql = f"""
                         INSERT INTO `{TARGET_TABLE}` 
                         (symbol, timeframe, real_change, real_close, screenshot, created_at)
@@ -218,8 +223,7 @@ def main():
                         real_change = VALUES(real_change),
                         real_close = VALUES(real_close),
                         screenshot = VALUES(screenshot),
-                        created_at = VALUES(created_at),
-                        `tags` = IFNULL(`tags`, VALUES(`tags`))
+                        created_at = VALUES(created_at)
                     """
 
                     cur.execute(sql, (
