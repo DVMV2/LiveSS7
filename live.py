@@ -20,7 +20,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 STOCK_LIST_URL = "https://docs.google.com/spreadsheets/d/1V8DsH-R3vdUbXqDKZYWHk_8T0VRjqTEVyj7PhlIDtG4/edit#gid=0"
 STOCK_LIST_GID = 1400370843
 SOURCE_TABLE = "wp_live_close"
-TARGET_TABLE = "live_screen_1"
+TARGET_TABLE = "live_screen"
 CHANGE_THRESHOLD = 7.0
 
 DB_CONNECT_RETRIES = 5       # number of attempts
@@ -147,7 +147,11 @@ def main():
             print("😴 No breakout stocks found above threshold today. Exiting safely.")
             return
 
-        # 3. Load URL map from Google Sheet
+        # 3. Cleanup: remove all untagged rows from live_screen first
+        cur.execute(f"DELETE FROM `{TARGET_TABLE}` WHERE `tags` IS NULL")
+        print(f"🧹 Removed {cur.rowcount} untagged row(s) from `{TARGET_TABLE}`.")
+
+        # 4. Load URL map from Google Sheet
         creds = json.loads(os.getenv("GSPREAD_CREDENTIALS"))
         gc = gspread.service_account_from_dict(creds)
         ws = gc.open_by_url(STOCK_LIST_URL).get_worksheet_by_id(STOCK_LIST_GID)
@@ -163,7 +167,7 @@ def main():
                     "day": row.iloc[3] if len(row) > 3 else None
                 }
 
-        # 4. Process screenshots
+        # 5. Process screenshots
         print(f"🚀 Processing {len(stocks)} breakthrough tickers...")
         driver = get_optimized_driver()
 
@@ -209,13 +213,7 @@ def main():
                     db_conn = ensure_connection(db_conn)
                     cur = db_conn.cursor(dictionary=True)
 
-                    # 5. Remove existing row if it's untagged, then insert/update
-                    cur.execute(f"""
-                        DELETE FROM `{TARGET_TABLE}`
-                        WHERE symbol = %s AND timeframe = %s AND `tags` IS NULL
-                    """, (symbol, timeframe))
-
-                    sql = f"""
+                    # Insert new row or update existing tagged row
                         INSERT INTO `{TARGET_TABLE}` 
                         (symbol, timeframe, real_change, real_close, screenshot, created_at)
                         VALUES (%s, %s, %s, %s, %s, %s)
