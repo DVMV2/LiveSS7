@@ -214,6 +214,7 @@ def main():
                     cur = db_conn.cursor(dictionary=True)
 
                     # Insert new row or update existing tagged row
+                    sql = f"""
                         INSERT INTO `{TARGET_TABLE}` 
                         (symbol, timeframe, real_change, real_close, screenshot, created_at)
                         VALUES (%s, %s, %s, %s, %s, %s)
